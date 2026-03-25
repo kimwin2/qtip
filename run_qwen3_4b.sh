@@ -7,6 +7,10 @@
 # ============================================================================
 set -e  # 에러 시 즉시 종료
 
+# ===== HuggingFace Cache (pre-downloaded) =====
+export HF_DATASETS_CACHE="/group-volume/ym1012.kim/repo/qtip/hf_cache/huggingface/datasets"
+export HF_HUB_CACHE="/group-volume/ym1012.kim/repo/qtip/hf_cache/huggingface/hub"
+
 # ===== Configuration =====
 BASE_MODEL="/models/Qwen/Qwen3-4B-Base"
 HESS_DIR="hessians/qwen3_4b"
