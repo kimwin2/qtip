@@ -6,7 +6,10 @@ import itertools
 import math
 from functools import cache
 
-import quiptools_cuda
+try:
+    import quiptools_cuda
+except ImportError:
+    quiptools_cuda = None
 import torch
 from torch import nn
 
