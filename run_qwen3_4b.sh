@@ -38,9 +38,7 @@ QUANT_BATCH_SIZE=16
 QUANT_DEVSET_SIZE=384
 QUANT_CTX_SIZE=4096
 
-# Transformers versions
-TRANSFORMERS_QUIP_SHARP="4.40.1"
-TRANSFORMERS_QTIP="4.51.3"
+# Transformers: use 4.51.3+ throughout (Qwen3 support required)
 
 # ===== Create directories =====
 mkdir -p ${HESS_DIR}
@@ -62,8 +60,6 @@ echo "=============================================="
 # ============================================================================
 echo ""
 echo "===== Step 1: Hessian Extraction ====="
-echo "Downgrading transformers to ${TRANSFORMERS_QUIP_SHARP} for quip-sharp..."
-pip install transformers==${TRANSFORMERS_QUIP_SHARP} -q
 
 cd quip-sharp
 
@@ -79,13 +75,6 @@ python -m quantize_llama.hessian_offline_llama \
 
 cd ..
 echo "Hessian extraction complete!"
-
-# ============================================================================
-# Step 2: Upgrade transformers for QTIP
-# ============================================================================
-echo ""
-echo "===== Upgrading transformers to ${TRANSFORMERS_QTIP} ====="
-pip install transformers==${TRANSFORMERS_QTIP} -q
 
 # ============================================================================
 # Step 3: QTIP Quantization
