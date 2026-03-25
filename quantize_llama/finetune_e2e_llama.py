@@ -17,8 +17,6 @@ from accelerate import infer_auto_device_map, init_empty_weights
 from torch import nn, optim
 from torch.utils.data import DataLoader, Dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from transformers.modeling_attn_mask_utils import \
-    _prepare_4d_causal_attention_mask
 
 from lib import codebook, utils
 from lib.algo import finetune
@@ -62,6 +60,14 @@ def main(args):
     devset = utils.sample_rp1t(tokenizer, args.devset_size, args.ctx_size,
                                args.sample_proc)
 
+    # Detect model type from the quantized model config
+    import transformers
+    quant_config = transformers.AutoConfig.from_pretrained(args.hf_path)
+    model_type = getattr(quant_config, 'model_type', 'llama')
+    glog.info(f'e2e finetune model_type: {model_type}')
+
+    # Build device map by inspecting actual model parameters
+    # First, load original model to figure out the device distribution
     with init_empty_weights():
         orig_model = AutoModelForCausalLM.from_pretrained(
             args.base_model,
@@ -69,17 +75,34 @@ def main(args):
             device_map='sequential',
             low_cpu_mem_usage=True)
 
-    start_dev = max(orig_model.hf_device_map.values()) + 1
+    # Detect start_dev from actual device assignments
+    # hf_device_map may not work reliably for all architectures,
+    # so we find the max device used by the original model
+    if hasattr(orig_model, 'hf_device_map') and orig_model.hf_device_map:
+        start_dev = max(orig_model.hf_device_map.values()) + 1
+    else:
+        # Fallback: scan all parameters for actual devices
+        max_dev = 0
+        for p in orig_model.parameters():
+            if p.device.type == 'cuda':
+                max_dev = max(max_dev, p.device.index or 0)
+        start_dev = max_dev + 1
+
     end_dev = torch.cuda.device_count()
+    n_layers = len(orig_model.model.layers)
+
+    # Build device map compatible with both Llama and Qwen3
     fake_dev_map = {
         'model.embed_tokens': start_dev,
-        'model.rotary_emb': start_dev,
         'model.norm': end_dev - 1,
         'lm_head': end_dev - 1
     }
-    per_dev = math.ceil(
-        (len(orig_model.model.layers) + 4) / (end_dev - start_dev))
-    for i in range(len(orig_model.model.layers)):
+    # Add rotary_emb if it exists at model level
+    if hasattr(orig_model.model, 'rotary_emb'):
+        fake_dev_map['model.rotary_emb'] = start_dev
+
+    per_dev = math.ceil((n_layers + 4) / (end_dev - start_dev))
+    for i in range(n_layers):
         fake_dev_map[f'model.layers.{i}'] = (i + 2) // per_dev + start_dev
 
     orig_dtype = orig_model.model.embed_tokens.weight.dtype

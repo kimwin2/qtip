@@ -352,10 +352,12 @@ def infer(args, end_dev, n_layers, in_q, out_q):
     with torch.no_grad():
         fake_dev_map = {
             'model.embed_tokens': 0,
-            'model.rotary_emb': 0,
             'model.norm': end_dev - 1,
             'lm_head': end_dev - 1
         }
+        # Add rotary_emb only if model has it at top level
+        # (Llama has model.rotary_emb, Qwen3 also has it)
+        fake_dev_map['model.rotary_emb'] = 0
         per_dev = math.ceil(n_layers / end_dev)
         for i in range(n_layers):
             fake_dev_map[f'model.layers.{i}'] = (i + 1) // per_dev

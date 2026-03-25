@@ -4,12 +4,12 @@ import time
 
 import glog
 import torch
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, AutoModelForCausalLM
 
 from lib import codebook, utils
 from lib.utils.unsafe_import import model_from_hf_path
 from model.llama import LlamaForCausalLM
-from transformers import LlamaForCausalLM as OrigLlama
+from model.qwen3 import Qwen3ForCausalLM
 
 torch.set_grad_enabled(False)
 
@@ -24,23 +24,33 @@ def main(args):
     saved_config = torch.load(os.path.join(args.quantized_path, 'config.pt'))
     model_config = saved_config['model_config']
     glog.info(model_config)
-    fused = model_config.quip_params.get('fused', True)
+
+    model_type = getattr(model_config, 'model_type', 'llama')
+    glog.info(f'model_type: {model_type}')
 
     tokenizer = AutoTokenizer.from_pretrained(model_config._name_or_path)
 
-    model = LlamaForCausalLM.from_pretrained(model_config._name_or_path,
-                                             torch_dtype='auto',
-                                             low_cpu_mem_usage=True,
-                                             config=model_config)
+    # Select model class based on model_type
+    if model_type == 'qwen3':
+        QuantModel = Qwen3ForCausalLM
+        OrigModel = AutoModelForCausalLM
+    else:
+        QuantModel = LlamaForCausalLM
+        from transformers import LlamaForCausalLM as OrigLlama
+        OrigModel = OrigLlama
 
-    orig_model = OrigLlama.from_pretrained(model_config._name_or_path,
+    model = QuantModel.from_pretrained(model_config._name_or_path,
+                                       torch_dtype='auto',
+                                       low_cpu_mem_usage=True,
+                                       config=model_config)
+
+    orig_model = OrigModel.from_pretrained(model_config._name_or_path,
                                            torch_dtype='auto',
-                                           low_cpu_mem_usage=True,
-                                           config=model_config)
+                                           low_cpu_mem_usage=True)
 
     if model_config.quip_params['skip_list'] is None:
         model_config.quip_params['skip_list'] = []
-    
+
     cpu = torch.device('cpu')
     if os.path.exists(f'{args.quantized_path}/lmhead.pt'):
         lmhead_data = torch.load(f'{args.quantized_path}/lmhead.pt',
@@ -70,20 +80,28 @@ def main(args):
                 ln_data['post_attention_layernorm'].to(
                     layer.post_attention_layernorm.weight.dtype))
 
+            # Load q_norm/k_norm if present (Qwen3)
+            if 'q_norm' in ln_data and hasattr(layer.self_attn, 'q_norm'):
+                layer.self_attn.q_norm.weight.copy_(
+                    ln_data['q_norm'].to(layer.self_attn.q_norm.weight.dtype))
+            if 'k_norm' in ln_data and hasattr(layer.self_attn, 'k_norm'):
+                layer.self_attn.k_norm.weight.copy_(
+                    ln_data['k_norm'].to(layer.self_attn.k_norm.weight.dtype))
+
         if f'{ii}_q' not in skip_list_union:
             saved_layer = torch.load(f'{args.quantized_path}/{ii}_q.pt',
                                      map_location=cpu)
             utils.unpack_quip(layer.self_attn.q_proj, saved_layer)
         else:
             layer.self_attn.q_proj = orig_model.model.layers[ii].self_attn.q_proj
-        
+
         if f'{ii}_k' not in skip_list_union:
             saved_layer = torch.load(f'{args.quantized_path}/{ii}_k.pt',
                                      map_location=cpu)
             utils.unpack_quip(layer.self_attn.k_proj, saved_layer)
         else:
             layer.self_attn.k_proj = orig_model.model.layers[ii].self_attn.k_proj
-            
+
         if f'{ii}_v' not in skip_list_union:
             saved_layer = torch.load(f'{args.quantized_path}/{ii}_v.pt',
                                      map_location=cpu)
@@ -104,14 +122,14 @@ def main(args):
             utils.unpack_quip(layer.mlp.up_proj, saved_layer)
         else:
             layer.mlp.up_proj = orig_model.model.layers[ii].mlp.up_proj
-            
+
         if f'{ii}_gate' not in skip_list_union:
             saved_layer = torch.load(f'{args.quantized_path}/{ii}_gate.pt',
                                      map_location=cpu)
             utils.unpack_quip(layer.mlp.gate_proj, saved_layer)
         else:
             layer.mlp.gate_proj = orig_model.model.layers[ii].mlp.gate_proj
-                      
+
         if f'{ii}_down' not in skip_list_union:
             saved_layer = torch.load(f'{args.quantized_path}/{ii}_down.pt',
                                      map_location=cpu)
@@ -120,7 +138,7 @@ def main(args):
             layer.mlp.down_proj = orig_model.model.layers[ii].mlp.down_proj
 
         glog.info(f'loaded layer {ii}')
-            
+
     glog.info(f'saving model...')
     model.save_pretrained(args.hf_output_path, safe_serialization=True)
 

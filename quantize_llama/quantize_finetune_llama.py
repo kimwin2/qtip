@@ -9,8 +9,6 @@ os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:512'
 import torch
 import torch.multiprocessing as mp
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from transformers.modeling_attn_mask_utils import \
-    _prepare_4d_causal_attention_mask
 
 from lib import utils
 from lib.algo import finetune
@@ -64,14 +62,14 @@ def check_exist(idx, args):
     return True
 
 
-def quantize_llama_decoder(layer, idx, cb, args, device, pre_orig_emb,
-                           orig_emb, model_config, skip_list):
+def quantize_decoder(layer, idx, cb, args, device, pre_orig_emb,
+                     orig_emb, model_config, skip_list):
     if check_exist(idx, args):
         return
 
     if skip_list is None:
         skip_list = []
-        
+
     # layer name, save_name, input hessian file, output hessian file
     quant_order = []
     for thing in [('self_attn.v_proj', 'v', 'qkv', 'v', 'col'),
@@ -86,20 +84,28 @@ def quantize_llama_decoder(layer, idx, cb, args, device, pre_orig_emb,
         else:
             attrgetter(thing[0])(layer).weight.requires_grad = False
             print(f'skipping {idx}_{thing[1]}')
-        
+
     finetune.quantize_finetune_decoder_layer(layer, quant_order, idx, cb, args,
                                              device, pre_orig_emb, orig_emb)
-    torch.save(
-        {
-            'input_layernorm': layer.input_layernorm.weight,
-            'post_attention_layernorm': layer.post_attention_layernorm.weight,
-        }, f'{args.save_path}/{idx}_layernorm.pt')
+
+    # Save layernorm weights
+    ln_dict = {
+        'input_layernorm': layer.input_layernorm.weight,
+        'post_attention_layernorm': layer.post_attention_layernorm.weight,
+    }
+    # Save q_norm/k_norm if present (Qwen3)
+    if hasattr(layer.self_attn, 'q_norm'):
+        ln_dict['q_norm'] = layer.self_attn.q_norm.weight
+    if hasattr(layer.self_attn, 'k_norm'):
+        ln_dict['k_norm'] = layer.self_attn.k_norm.weight
+
+    torch.save(ln_dict, f'{args.save_path}/{idx}_layernorm.pt')
 
 
 def main(args):
     if args.skip_list is not None:
         args.skip_list = args.skip_list.split(',')
-        
+
     dtype_ = torch.float64 if args.use_fp64 else torch.float32
 
     cb = bitshift.bitshift_codebook(L=args.L,
@@ -137,77 +143,121 @@ def main(args):
                                args.sample_proc)
     glog.info('loaded dataset and devset')
 
-    nproc = torch.cuda.device_count()
-    orig_emb_cache = [model.model.embed_tokens(devset)]
+    # === Single-GPU Sequential Processing ===
+    device = torch.device('cuda:0')
 
-    for _ in range(nproc):
-        orig_emb_cache.append(
-            torch.zeros(orig_emb_cache[0].shape,
-                        dtype=orig_emb_cache[0].dtype,
-                        device=orig_emb_cache[0].device))
+    # Compute initial embeddings
+    orig_emb = model.model.embed_tokens(devset)
+    glog.info(f'computed initial embeddings, shape: {orig_emb.shape}')
 
-    position_ids = torch.arange(args.ctx_size, dtype=torch.int32)[None, :] + \
-        torch.zeros(args.batch_size, args.ctx_size, dtype=torch.int32)
-    attention_mask = _prepare_4d_causal_attention_mask(
-        None, (args.batch_size, args.ctx_size),
-        orig_emb_cache[0][:args.batch_size], 0)
+    # Capture kwargs needed for decoder layer forward pass
+    # Use a Catcher to get position_ids, attention_mask, etc.
+    class KwargsCatcher(torch.nn.Module):
+        def __init__(self, layer):
+            super().__init__()
+            self.layer = layer
+            self.captured_args = None
+            self.captured_kwargs = None
 
-    cur_device = 0
-    proc_list = [None for _ in range(nproc)]
+        def forward(self, *args, **kwargs):
+            self.captured_args = args
+            self.captured_kwargs = kwargs
+            raise StopIteration
+
+    # Get the kwargs by running a dummy forward through the full model
+    catcher = KwargsCatcher(model.model.layers[0])
+    original_layer = model.model.layers[0]
+    model.model.layers[0] = catcher
+    try:
+        dummy_input = devset[:args.batch_size].to(device)
+        model.to(device)
+        model(dummy_input, use_cache=False)
+    except StopIteration:
+        pass
+    model.model.layers[0] = original_layer
+    model.cpu()
+    utils.clean()
+
+    # Extract captured kwargs
+    layer_kwargs = {}
+    if catcher.captured_kwargs is not None:
+        for key in ['position_ids', 'attention_mask', 'position_embeddings']:
+            if key in catcher.captured_kwargs and catcher.captured_kwargs[key] is not None:
+                val = catcher.captured_kwargs[key]
+                if isinstance(val, torch.Tensor):
+                    layer_kwargs[key] = val.cpu()
+                elif isinstance(val, tuple):
+                    layer_kwargs[key] = tuple(v.cpu() if isinstance(v, torch.Tensor) else v for v in val)
+                else:
+                    layer_kwargs[key] = val
+    del catcher
+    utils.clean()
+
+    # Re-compute embeddings on CPU
+    orig_emb = model.model.embed_tokens(devset)
+
+    # Process each layer sequentially on single GPU
     for i in range(len(model.model.layers)):
-        glog.info(f'layer {i} gpu {cur_device}')
-        if proc_list[cur_device] is not None:
-            proc_list[cur_device][0].join()
-            model.model.layers[proc_list[cur_device][1]] = None
-            utils.clean()
-            if cur_device == 0:
-                orig_emb_cache[0].copy_(orig_emb_cache[-1])
-        if cur_device + 1 < nproc and proc_list[cur_device + 1] is not None:
-            proc_list[cur_device + 1][0].join()
-        utils.clean()
+        glog.info(f'=== Processing layer {i} ===')
         st = time.time()
-        position_ids = position_ids.to(cur_device)
-        attention_mask = attention_mask.to(cur_device)
-        model.model.layers[i].to(cur_device)
-        for j in range(args.devset_size // args.batch_size):
+
+        # Move layer to GPU
+        model.model.layers[i].to(device)
+
+        # Compute output embeddings for this layer
+        new_emb = torch.zeros_like(orig_emb)
+        for j in range(0, args.devset_size, args.batch_size):
+            end_j = min(j + args.batch_size, args.devset_size)
+            batch_input = orig_emb[j:end_j].to(device)
+
+            # Prepare kwargs for this batch
+            fwd_kwargs = {
+                'use_cache': False,
+                'output_attentions': False,
+            }
+            for key, val in layer_kwargs.items():
+                if isinstance(val, torch.Tensor):
+                    fwd_kwargs[key] = val.to(device)
+                elif isinstance(val, tuple):
+                    fwd_kwargs[key] = tuple(v.to(device) if isinstance(v, torch.Tensor) else v for v in val)
+                else:
+                    fwd_kwargs[key] = val
+
+            with torch.no_grad():
+                output = model.model.layers[i](batch_input, **fwd_kwargs)[0]
+            new_emb[j:end_j] = output.cpu()
+
+            del batch_input, output
             utils.clean()
-            orig_emb_cache[cur_device + 1][args.batch_size * j : args.batch_size * (j + 1)] = \
-                model.model.layers[i](
-                    orig_emb_cache[cur_device][args.batch_size * j : args.batch_size * (j + 1)].to(cur_device),
-                    position_ids=position_ids,
-                    attention_mask=attention_mask,
-                    use_cache=False,
-                    output_attentions=False)[0].cpu()
+
         model.model.layers[i].cpu()
-        position_ids = position_ids.cpu()
-        attention_mask = attention_mask.cpu()
         utils.clean()
-        glog.info('computed original embedding for layer {} in {}s'.format(i, time.time() - st))
+        glog.info(f'computed original embedding for layer {i} in {time.time() - st:.1f}s')
 
-        proc_list[cur_device] = (mp.Process(target=quantize_llama_decoder,
-                                            args=(
-                                                model.model.layers[i],
-                                                i,
-                                                cb,
-                                                args,
-                                                cur_device,
-                                                orig_emb_cache[cur_device],
-                                                orig_emb_cache[cur_device + 1],
-                                                all_config['model_config'],
-                                                args.skip_list
-                                            )), i)
-        proc_list[cur_device][0].start()
+        # Quantize this layer (single GPU, synchronous)
+        quantize_decoder(
+            model.model.layers[i],
+            i,
+            cb,
+            args,
+            device,
+            orig_emb,      # pre-layer embeddings
+            new_emb,        # post-layer embeddings
+            all_config['model_config'],
+            args.skip_list
+        )
 
-        cur_device = (cur_device + 1) % nproc
+        # Update embeddings for next layer
+        orig_emb = new_emb
 
-    for p in proc_list:
-        p[0].join()
+        # Free layer memory
+        model.model.layers[i] = None
+        utils.clean()
+        glog.info(f'=== Done layer {i} ===')
 
 
 if __name__ == '__main__':
     torch.set_grad_enabled(False)
-    mp.set_start_method('spawn')
-    mp.set_sharing_strategy('file_system')
     args = parser.parse_args()
     torch.manual_seed(args.seed)
     os.makedirs(args.save_path, exist_ok=True)
