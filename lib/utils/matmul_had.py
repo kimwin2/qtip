@@ -60,23 +60,19 @@ def get_hadK(n, transpose=False):
         K = 1
     else:
         # Fallback for unsupported dimensions (e.g., Qwen3-4B intermediate_size=9728)
-        # Find the largest power-of-2 factor, use remainder as K with random orthogonal
+        # Find odd part of n: smallest K such that n/K is a power of 2
+        # Example: 9728 = 19 * 512, so K=19, n/K=512=2^9
         K = n
-        while K > 1 and not is_pow2(n // K):
-            if K % 2 == 0:
-                K = K // 2
-            else:
-                K = n  # use full dimension
-                break
-        if K == n or not is_pow2(n // K):
-            # Use n as K with a random orthogonal matrix (fixed seed for reproducibility)
-            K = n
+        while K % 2 == 0:
+            K = K // 2
+        # Now K is the odd part of n, and n/K is a power of 2
+        assert is_pow2(n // K), f"Failed to find valid K for dim {n}"
         import warnings
         warnings.warn(f"No Hadamard matrix for dim {n}, using random orthogonal matrix with K={K}")
-        # Generate random orthogonal matrix with fixed seed
+        # Generate random orthogonal matrix with fixed seed (float32 required for QR)
         rng = torch.Generator()
         rng.manual_seed(0)
-        Q = torch.linalg.qr(torch.randn(K, K, generator=rng))[0]
+        Q = torch.linalg.qr(torch.randn(K, K, generator=rng, dtype=torch.float32))[0]
         hadK = Q.T if transpose else Q
 
     return hadK, K
