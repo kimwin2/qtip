@@ -21,7 +21,7 @@ parser.add_argument('--skip_list', default=None, type=str)
 
 def main(args):
     assert os.path.exists(args.quantized_path)
-    saved_config = torch.load(os.path.join(args.quantized_path, 'config.pt'))
+    saved_config = torch.load(os.path.join(args.quantized_path, 'config.pt'), weights_only=False)
     model_config = saved_config['model_config']
     glog.info(model_config)
 
@@ -54,7 +54,7 @@ def main(args):
     cpu = torch.device('cpu')
     if os.path.exists(f'{args.quantized_path}/lmhead.pt'):
         lmhead_data = torch.load(f'{args.quantized_path}/lmhead.pt',
-                                 map_location=cpu)
+                                 map_location=cpu, weights_only=False)
         model.lm_head.weight.copy_(lmhead_data['lm_head'].to(
             model.lm_head.weight.dtype))
         model.model.norm.weight.copy_(lmhead_data['norm'].to(
@@ -73,7 +73,7 @@ def main(args):
 
         if os.path.exists(f'{args.quantized_path}/{ii}_layernorm.pt'):
             ln_data = torch.load(f'{args.quantized_path}/{ii}_layernorm.pt',
-                                 map_location=cpu)
+                                 map_location=cpu, weights_only=False)
             layer.input_layernorm.weight.copy_(ln_data['input_layernorm'].to(
                 layer.input_layernorm.weight.dtype))
             layer.post_attention_layernorm.weight.copy_(
@@ -90,49 +90,49 @@ def main(args):
 
         if f'{ii}_q' not in skip_list_union:
             saved_layer = torch.load(f'{args.quantized_path}/{ii}_q.pt',
-                                     map_location=cpu)
+                                     map_location=cpu, weights_only=False)
             utils.unpack_quip(layer.self_attn.q_proj, saved_layer)
         else:
             layer.self_attn.q_proj = orig_model.model.layers[ii].self_attn.q_proj
 
         if f'{ii}_k' not in skip_list_union:
             saved_layer = torch.load(f'{args.quantized_path}/{ii}_k.pt',
-                                     map_location=cpu)
+                                     map_location=cpu, weights_only=False)
             utils.unpack_quip(layer.self_attn.k_proj, saved_layer)
         else:
             layer.self_attn.k_proj = orig_model.model.layers[ii].self_attn.k_proj
 
         if f'{ii}_v' not in skip_list_union:
             saved_layer = torch.load(f'{args.quantized_path}/{ii}_v.pt',
-                                     map_location=cpu)
+                                     map_location=cpu, weights_only=False)
             utils.unpack_quip(layer.self_attn.v_proj, saved_layer)
         else:
             layer.self_attn.v_proj = orig_model.model.layers[ii].self_attn.v_proj
 
         if f'{ii}_o' not in skip_list_union:
             saved_layer = torch.load(f'{args.quantized_path}/{ii}_o.pt',
-                                     map_location=cpu)
+                                     map_location=cpu, weights_only=False)
             utils.unpack_quip(layer.self_attn.o_proj, saved_layer)
         else:
             layer.self_attn.o_proj = orig_model.model.layers[ii].self_attn.o_proj
 
         if f'{ii}_up' not in skip_list_union:
             saved_layer = torch.load(f'{args.quantized_path}/{ii}_up.pt',
-                                     map_location=cpu)
+                                     map_location=cpu, weights_only=False)
             utils.unpack_quip(layer.mlp.up_proj, saved_layer)
         else:
             layer.mlp.up_proj = orig_model.model.layers[ii].mlp.up_proj
 
         if f'{ii}_gate' not in skip_list_union:
             saved_layer = torch.load(f'{args.quantized_path}/{ii}_gate.pt',
-                                     map_location=cpu)
+                                     map_location=cpu, weights_only=False)
             utils.unpack_quip(layer.mlp.gate_proj, saved_layer)
         else:
             layer.mlp.gate_proj = orig_model.model.layers[ii].mlp.gate_proj
 
         if f'{ii}_down' not in skip_list_union:
             saved_layer = torch.load(f'{args.quantized_path}/{ii}_down.pt',
-                                     map_location=cpu)
+                                     map_location=cpu, weights_only=False)
             utils.unpack_quip(layer.mlp.down_proj, saved_layer)
         else:
             layer.mlp.down_proj = orig_model.model.layers[ii].mlp.down_proj

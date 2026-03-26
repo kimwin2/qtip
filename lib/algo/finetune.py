@@ -33,9 +33,18 @@ def finetune_decoder_layer(layer, name, device, train_dl, valid_dl, orig_dtype,
 
         source = next(iter(train_dl))[0]
         position_ids = torch.arange(source.shape[1], device=device).unsqueeze(0)
+
+        # Compute position_embeddings for models that need it (Qwen3)
+        extra_kwargs = {}
+        if hasattr(layer.self_attn, 'rotary_emb'):
+            rotary_emb = layer.self_attn.rotary_emb
+            cos, sin = rotary_emb(source.to(device), position_ids)
+            extra_kwargs['position_embeddings'] = (cos, sin)
+        else:
+            extra_kwargs['position_ids'] = position_ids
+
         # manifest tensor parallel attributes in layer
-        output = layer(source.to(device),
-                       position_ids=position_ids)[0]
+        output = layer(source.to(device), **extra_kwargs)[0]
         
         best_sd = {k: v.cpu() for k, v in layer.state_dict().items()}
         utils.clean()
@@ -52,8 +61,7 @@ def finetune_decoder_layer(layer, name, device, train_dl, valid_dl, orig_dtype,
                 with torch.autocast(device_type='cuda',
                                     dtype=orig_dtype,
                                     enabled=True):
-                    output = layer(source.to(device),
-                                   position_ids=position_ids)[0]
+                    output = layer(source.to(device), **extra_kwargs)[0]
                     loss = nn.MSELoss()(output, targets)
                 scaler.scale(loss).backward()
                 if bidx % args.ft_update_freq == args.ft_update_freq - 1 or bidx == len(

@@ -3,7 +3,7 @@ from torch import nn
 
 
 def save_linear(module, path):
-    saved_layer = torch.load(path, map_location=torch.device('cpu'))
+    saved_layer = torch.load(path, map_location=torch.device('cpu'), weights_only=False)
     saved_layer['SU'] = module.SU.data.to(torch.float16)
     saved_layer['SV'] = (
         module.SV.data.float() /
@@ -18,14 +18,22 @@ def calculate_mse_loss(layer, dataloader, device):
     total_loss = 0
     ct = 0
     position_ids = None
+    extra_kwargs = None
     with torch.no_grad():
         for source, target in dataloader:
             if position_ids is None:
                 position_ids = torch.arange(source.shape[1],
                                             device=device).unsqueeze(0)
+                # Compute position_embeddings for Qwen3
+                extra_kwargs = {}
+                if hasattr(layer.self_attn, 'rotary_emb'):
+                    cos, sin = layer.self_attn.rotary_emb(source.to(device), position_ids)
+                    extra_kwargs['position_embeddings'] = (cos, sin)
+                else:
+                    extra_kwargs['position_ids'] = position_ids
             target = target.to(device, non_blocking=True)
             total_loss += nn.MSELoss()(layer(source.to(device),
-                                             position_ids=position_ids)[0],
+                                             **extra_kwargs)[0],
                                        target)
             ct += 1
     layer.train()

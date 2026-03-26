@@ -66,30 +66,19 @@ def main(args):
     model_type = getattr(quant_config, 'model_type', 'llama')
     glog.info(f'e2e finetune model_type: {model_type}')
 
-    # Build device map by inspecting actual model parameters
-    # First, load original model to figure out the device distribution
-    with init_empty_weights():
-        orig_model = AutoModelForCausalLM.from_pretrained(
-            args.base_model,
-            torch_dtype='auto',
-            device_map='sequential',
-            low_cpu_mem_usage=True)
+    # Load original model on GPU 0 to determine layout
+    orig_model = AutoModelForCausalLM.from_pretrained(
+        args.base_model,
+        torch_dtype='auto',
+        device_map={'': 0},
+        low_cpu_mem_usage=True)
 
-    # Detect start_dev from actual device assignments
-    # hf_device_map may not work reliably for all architectures,
-    # so we find the max device used by the original model
-    if hasattr(orig_model, 'hf_device_map') and orig_model.hf_device_map:
-        start_dev = max(orig_model.hf_device_map.values()) + 1
-    else:
-        # Fallback: scan all parameters for actual devices
-        max_dev = 0
-        for p in orig_model.parameters():
-            if p.device.type == 'cuda':
-                max_dev = max(max_dev, p.device.index or 0)
-        start_dev = max_dev + 1
-
-    end_dev = torch.cuda.device_count()
+    orig_dtype = orig_model.model.embed_tokens.weight.dtype
     n_layers = len(orig_model.model.layers)
+
+    # Quantized model goes on GPU 1+
+    start_dev = 1
+    end_dev = torch.cuda.device_count()
 
     # Build device map compatible with both Llama and Qwen3
     fake_dev_map = {
@@ -105,7 +94,6 @@ def main(args):
     for i in range(n_layers):
         fake_dev_map[f'model.layers.{i}'] = (i + 2) // per_dev + start_dev
 
-    orig_dtype = orig_model.model.embed_tokens.weight.dtype
     print(orig_dtype)
     print(fake_dev_map)
     del orig_model  # remanifest in eval process
