@@ -63,7 +63,7 @@ def check_exist(idx, args):
 
 
 def quantize_decoder(layer, idx, cb, args, device, pre_orig_emb,
-                     orig_emb, model_config, skip_list):
+                     orig_emb, model_config, skip_list, layer_kwargs=None):
     if check_exist(idx, args):
         return
 
@@ -86,7 +86,8 @@ def quantize_decoder(layer, idx, cb, args, device, pre_orig_emb,
             print(f'skipping {idx}_{thing[1]}')
 
     finetune.quantize_finetune_decoder_layer(layer, quant_order, idx, cb, args,
-                                             device, pre_orig_emb, orig_emb)
+                                             device, pre_orig_emb, orig_emb,
+                                             layer_kwargs=layer_kwargs)
 
     # Save layernorm weights
     ln_dict = {
@@ -244,7 +245,8 @@ def main(args):
             orig_emb,      # pre-layer embeddings
             new_emb,        # post-layer embeddings
             all_config['model_config'],
-            args.skip_list
+            args.skip_list,
+            layer_kwargs=layer_kwargs
         )
 
         # Update embeddings for next layer

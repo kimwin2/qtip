@@ -27,19 +27,20 @@ def use_tf32():
 
 
 def finetune_decoder_layer(layer, name, device, train_dl, valid_dl, orig_dtype,
-                           args):
+                           args, layer_kwargs=None):
     with use_tf32():
         layer = layer.to(device)
 
         source = next(iter(train_dl))[0]
         position_ids = torch.arange(source.shape[1], device=device).unsqueeze(0)
 
-        # Compute position_embeddings for models that need it (Qwen3)
+        # Build extra kwargs for layer forward
         extra_kwargs = {}
-        if hasattr(layer.self_attn, 'rotary_emb'):
-            rotary_emb = layer.self_attn.rotary_emb
-            cos, sin = rotary_emb(source.to(device), position_ids)
-            extra_kwargs['position_embeddings'] = (cos, sin)
+        if layer_kwargs and 'position_embeddings' in layer_kwargs:
+            pe = layer_kwargs['position_embeddings']
+            extra_kwargs['position_embeddings'] = tuple(
+                v.to(device) if isinstance(v, torch.Tensor) else v for v in pe
+            )
         else:
             extra_kwargs['position_ids'] = position_ids
 
@@ -50,7 +51,7 @@ def finetune_decoder_layer(layer, name, device, train_dl, valid_dl, orig_dtype,
         utils.clean()
 
         optim = torch.optim.Adam(layer.parameters(), lr=args.ft_lr)
-        best_loss = utils.calculate_mse_loss(layer, valid_dl, device)
+        best_loss = utils.calculate_mse_loss(layer, valid_dl, device, extra_kwargs=extra_kwargs)
         glog.info(f'layer {name} initial loss {best_loss}')
         scaler = torch.cuda.amp.GradScaler(enabled=(orig_dtype==torch.float16))
         worse_ct = 0
@@ -71,7 +72,7 @@ def finetune_decoder_layer(layer, name, device, train_dl, valid_dl, orig_dtype,
                     optim.zero_grad()
 
             if epoch % args.ft_valid_freq == (args.ft_valid_freq - 1):
-                test_loss = utils.calculate_mse_loss(layer, valid_dl, device)
+                test_loss = utils.calculate_mse_loss(layer, valid_dl, device, extra_kwargs=extra_kwargs)
                 if test_loss < best_loss:
                     glog.info(
                         f'layer {name} @ epoch {epoch} new loss {test_loss} old loss {best_loss} BETTER'
@@ -96,7 +97,8 @@ def finetune_decoder_layer(layer, name, device, train_dl, valid_dl, orig_dtype,
 
 
 def quantize_finetune_decoder_layer(mixed_layer, quant_order, idx, cb, args,
-                                    device, pre_orig_emb, orig_emb):
+                                    device, pre_orig_emb, orig_emb,
+                                    layer_kwargs=None):
     torch.manual_seed(idx)
     torch.set_num_threads(args.num_cpu_threads)
     torch.set_grad_enabled(False)
@@ -319,7 +321,8 @@ def quantize_finetune_decoder_layer(mixed_layer, quant_order, idx, cb, args,
 
         with torch.enable_grad():
             finetune_decoder_layer(mixed_layer, f'{idx}_{name}', device,
-                                   train_dl, valid_dl, orig_dtype, args)
+                                   train_dl, valid_dl, orig_dtype, args,
+                                   layer_kwargs=layer_kwargs)
 
         cb = cb.cpu()
         utils.clean()

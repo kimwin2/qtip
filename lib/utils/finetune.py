@@ -13,24 +13,18 @@ def save_linear(module, path):
     torch.save(saved_layer, path)
 
 
-def calculate_mse_loss(layer, dataloader, device):
+def calculate_mse_loss(layer, dataloader, device, extra_kwargs=None):
     layer.eval()
     total_loss = 0
     ct = 0
-    position_ids = None
-    extra_kwargs = None
+    if extra_kwargs is None:
+        extra_kwargs = {}
     with torch.no_grad():
         for source, target in dataloader:
-            if position_ids is None:
+            if 'position_ids' not in extra_kwargs and 'position_embeddings' not in extra_kwargs:
                 position_ids = torch.arange(source.shape[1],
                                             device=device).unsqueeze(0)
-                # Compute position_embeddings for Qwen3
-                extra_kwargs = {}
-                if hasattr(layer.self_attn, 'rotary_emb'):
-                    cos, sin = layer.self_attn.rotary_emb(source.to(device), position_ids)
-                    extra_kwargs['position_embeddings'] = (cos, sin)
-                else:
-                    extra_kwargs['position_ids'] = position_ids
+                extra_kwargs['position_ids'] = position_ids
             target = target.to(device, non_blocking=True)
             total_loss += nn.MSELoss()(layer(source.to(device),
                                              **extra_kwargs)[0],
