@@ -70,7 +70,7 @@ python -m quantize_llama.hessian_offline_llama \
     --batch_size ${HESS_BATCH_SIZE} \
     --devset_size ${HESS_DEVSET_SIZE} \
     --ctx_size ${HESS_CTX_SIZE} \
-    --sample_proc 4 \
+    --sample_proc 1 \
     2>&1 | tee -a ../${LOG_FILE}
 
 cd ..
