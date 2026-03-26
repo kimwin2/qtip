@@ -66,19 +66,20 @@ def main(args):
     model_type = getattr(quant_config, 'model_type', 'llama')
     glog.info(f'e2e finetune model_type: {model_type}')
 
-    # Load original model on GPU 0 to determine layout
+    # Load original model on CPU to determine layout (avoid taking a GPU slot)
     orig_model = AutoModelForCausalLM.from_pretrained(
         args.base_model,
         torch_dtype='auto',
-        device_map={'': 0},
+        device_map='cpu',
         low_cpu_mem_usage=True)
 
     orig_dtype = orig_model.model.embed_tokens.weight.dtype
     n_layers = len(orig_model.model.layers)
 
-    # Quantized model goes on GPU 1+
-    start_dev = 1
+    # Use all available GPUs for quantized model
+    start_dev = 0
     end_dev = torch.cuda.device_count()
+    assert end_dev > 0, "No GPUs available for E2E finetuning"
 
     # Build device map compatible with both Llama and Qwen3
     fake_dev_map = {
@@ -92,7 +93,7 @@ def main(args):
 
     per_dev = math.ceil((n_layers + 4) / (end_dev - start_dev))
     for i in range(n_layers):
-        fake_dev_map[f'model.layers.{i}'] = (i + 2) // per_dev + start_dev
+        fake_dev_map[f'model.layers.{i}'] = min((i + 2) // per_dev + start_dev, end_dev - 1)
 
     print(orig_dtype)
     print(fake_dev_map)
