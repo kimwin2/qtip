@@ -123,12 +123,12 @@ echo "===== Step 5: E2E Finetuning (2 GPUs) ====="
 python -m quantize_llama.finetune_e2e_llama \
     --base_model ${BASE_MODEL} \
     --hf_path ${HF_DIR} \
-    --devset_size 256 \
-    --ft_valid_size 64 \
+    --devset_size 128 \
+    --ft_valid_size 32 \
     --ft_epochs 4 \
     --ft_update_freq 2 \
     --ft_bs 1 \
-    --ctx_size 2048 \
+    --ctx_size 1024 \
     --ft_train_lut \
     --hf_output_path ${HF_E2E_DIR} \
     2>&1 | tee -a ${LOG_FILE}
