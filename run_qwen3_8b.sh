@@ -103,18 +103,17 @@ echo "=============================================="
 # 
 # echo "Quantization complete!"
 # 
-# # ============================================================================
-# # Step 4: Convert to HuggingFace model
-# # ============================================================================
-# echo ""
-# echo "===== Step 4: HF Model Conversion ====="
-# python -m quantize_llama.hfize_llama \
-#     --quantized_path ${CKPT_DIR} \
-#     --hf_output_path ${HF_DIR} \
-#     2>&1 | tee -a ${LOG_FILE}
-# 
-# echo "HF conversion complete!"
-# 
+# ============================================================================
+# Step 4: Convert to HuggingFace model
+# ============================================================================
+echo ""
+echo "===== Step 4: HF Model Conversion ====="
+python -m quantize_llama.hfize_llama \
+    --quantized_path ${CKPT_DIR} \
+    --hf_output_path ${HF_DIR} \
+    2>&1 | tee -a ${LOG_FILE}
+
+echo "HF conversion complete!" 
 # ============================================================================
 # Step 5: End-to-End Finetuning (requires 2 GPUs)
 # ============================================================================
@@ -123,12 +122,12 @@ echo "===== Step 5: E2E Finetuning (2 GPUs) ====="
 python -m quantize_llama.finetune_e2e_llama \
     --base_model ${BASE_MODEL} \
     --hf_path ${HF_DIR} \
-    --devset_size 128 \
-    --ft_valid_size 32 \
+    --devset_size 256 \
+    --ft_valid_size 64 \
     --ft_epochs 4 \
     --ft_update_freq 2 \
     --ft_bs 1 \
-    --ctx_size 1024 \
+    --ctx_size 2048 \
     --ft_train_lut \
     --hf_output_path ${HF_E2E_DIR} \
     2>&1 | tee -a ${LOG_FILE}
