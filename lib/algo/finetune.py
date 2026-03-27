@@ -366,14 +366,10 @@ def infer(args, end_dev, n_layers, in_q, out_q):
         num_devs = torch.cuda.device_count()
         assert num_devs > 0, "No GPUs visible in infer subprocess"
 
-        # Put lm_head on device 0 (same as embed_tokens) so that tied
-        # word embeddings stay on a single GPU.  accelerate's hooks
-        # automatically move hidden states from norm's device to
-        # lm_head's device, so this is safe.
         fake_dev_map = {
             'model.embed_tokens': 0,
             'model.norm': num_devs - 1,
-            'lm_head': 0
+            'lm_head': num_devs - 1
         }
         # Add rotary_emb only if model has it at top level
         # (Llama has model.rotary_emb, Qwen3 also has it)
@@ -382,10 +378,31 @@ def infer(args, end_dev, n_layers, in_q, out_q):
         for i in range(n_layers):
             fake_dev_map[f'model.layers.{i}'] = min((i + 1) // per_dev, num_devs - 1)
 
-        model = AutoModelForCausalLM.from_pretrained(args.base_model,
-                                                     torch_dtype='auto',
-                                                     device_map=fake_dev_map,
-                                                     low_cpu_mem_usage=True)
+        # When tie_word_embeddings is True, lm_head.weight and
+        # embed_tokens.weight share the same tensor — placing them on
+        # different GPUs causes a RuntimeError.  Fix: set
+        # tie_word_embeddings=False in the config *before* loading so
+        # they are separate parameters, then copy the weight.
+        from transformers import AutoConfig
+        config = AutoConfig.from_pretrained(args.base_model)
+        originally_tied = config.tie_word_embeddings
+        if originally_tied:
+            config.tie_word_embeddings = False
+
+        model = AutoModelForCausalLM.from_pretrained(
+            args.base_model,
+            config=config,
+            torch_dtype='auto',
+            device_map=fake_dev_map,
+            low_cpu_mem_usage=True)
+
+        if originally_tied:
+            # lm_head.weight was not in the checkpoint (it was tied to
+            # embed_tokens).  Copy the embedding weights now.
+            model.lm_head.weight.data.copy_(
+                model.model.embed_tokens.weight.data.to(
+                    model.lm_head.weight.device))
+
         while True:
             data = in_q.get()
             if data is None:
