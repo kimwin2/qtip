@@ -407,9 +407,18 @@ def infer(args, end_dev, n_layers, in_q, out_q):
             data = in_q.get()
             if data is None:
                 return
-            out_q.put(
-                model(data.to(0))['logits'][:, :-1].contiguous().softmax(
-                    dim=-1).cpu())
+            # Process each sample individually to reduce peak VRAM usage.
+            # logits (seq_len × vocab_size) and softmax are very large;
+            # doing them one sample at a time halves peak memory for bs=2.
+            results = []
+            for i in range(data.shape[0]):
+                sample = data[i:i+1].to(0)
+                logits = model(sample)['logits'][:, :-1].contiguous()
+                probs = logits.softmax(dim=-1).cpu()
+                del logits, sample
+                results.append(probs)
+                torch.cuda.empty_cache()
+            out_q.put(torch.cat(results, dim=0))
 
 
 def finetune_susv_e2e(quant_model, start_dev, devset, orig_dtype, args):
