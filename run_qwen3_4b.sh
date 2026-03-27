@@ -1,7 +1,10 @@
 #!/bin/bash
 # ============================================================================
-# Qwen3-4B QTIP Quantization Pipeline
-# 전체 파이프라인: Hessian → Quantize → HFize → E2E Finetune → Eval PPL
+# Qwen3-4B QTIP Quantization Pipeline (Re-run after Hadamard fix)
+# Step 3 (Quantize) → Step 4 (HFize) → Step 5 (E2E) → Step 6 (Eval PPL)
+#
+# Hessian은 재사용 (Hadamard 변환 미사용이므로 영향 없음)
+# 기존 ckpt/hf 결과는 삭제 후 재생성
 #
 # 사용법: bash run_qwen3_4b.sh
 # ============================================================================
@@ -18,7 +21,7 @@ CKPT_DIR="ckpt/qwen3_4b_2bit"
 HF_DIR="hf/qwen3_4b_2bit"
 HF_E2E_DIR="hf/qwen3_4b_2bit_e2e"
 LOG_DIR="logs"
-LOG_FILE="${LOG_DIR}/qwen3_4b_2bit.log"
+LOG_FILE="${LOG_DIR}/qwen3_4b_2bit_rerun.log"
 
 # Quantization parameters (2-bit HYB)
 L=16
@@ -31,94 +34,78 @@ TLUT_BITS=9
 SCALE=0.9
 
 # Training parameters
-HESS_BATCH_SIZE=2
-HESS_DEVSET_SIZE=256
-HESS_CTX_SIZE=4096
 QUANT_BATCH_SIZE=8
 QUANT_DEVSET_SIZE=256
 QUANT_CTX_SIZE=4096
 
-# Transformers: use 4.51.3+ throughout (Qwen3 support required)
-
 # ===== Create directories =====
-mkdir -p ${HESS_DIR}
+mkdir -p ${LOG_DIR}
+
+echo "==============================================" | tee -a ${LOG_FILE}
+echo " Qwen3-4B QTIP Re-quantization (Hadamard fix)" | tee -a ${LOG_FILE}
+echo "==============================================" | tee -a ${LOG_FILE}
+echo "Model: ${BASE_MODEL}" | tee -a ${LOG_FILE}
+echo "Quantization: ${K}-bit (L=${L}, K=${K}, V=${V})" | tee -a ${LOG_FILE}
+echo "Note: intermediate_size=9728=19*512 now uses correctly scaled orthogonal matrix" | tee -a ${LOG_FILE}
+echo "==============================================" | tee -a ${LOG_FILE}
+
+# ============================================================================
+# Clean old (broken) checkpoints
+# ============================================================================
+echo "" | tee -a ${LOG_FILE}
+echo "===== Cleaning old checkpoints =====" | tee -a ${LOG_FILE}
+rm -rf ${CKPT_DIR}
+rm -rf ${HF_DIR}
+rm -rf ${HF_E2E_DIR}
 mkdir -p ${CKPT_DIR}
 mkdir -p ${HF_DIR}
 mkdir -p ${HF_E2E_DIR}
-mkdir -p ${LOG_DIR}
+echo "Old ckpt/hf directories cleaned." | tee -a ${LOG_FILE}
 
-echo "=============================================="
-echo " Qwen3-4B QTIP Quantization Pipeline"
-echo "=============================================="
-echo "Model: ${BASE_MODEL}"
-echo "Quantization: ${K}-bit (L=${L}, K=${K}, V=${V})"
-echo "Log: ${LOG_FILE}"
-echo "=============================================="
+# ============================================================================
+# Step 3: QTIP Quantization (re-run with Hadamard fix)
+# ============================================================================
+echo "" | tee -a ${LOG_FILE}
+echo "===== Step 3: QTIP Quantization =====" | tee -a ${LOG_FILE}
+echo "Running quantization (single-GPU)..." | tee -a ${LOG_FILE}
+python -m quantize_llama.quantize_finetune_llama \
+    --save_path ${CKPT_DIR} \
+    --codebook bitshift \
+    --base_model ${BASE_MODEL} \
+    --in_hess_path ${HESS_DIR} \
+    --scale_override ${SCALE} \
+    --ft_epochs 5 \
+    --td_x ${TD_X} \
+    --td_y ${TD_Y} \
+    --L ${L} \
+    --K ${K} \
+    --V ${V} \
+    --decode_mode ${DECODE_MODE} \
+    --tlut_bits ${TLUT_BITS} \
+    --batch_size ${QUANT_BATCH_SIZE} \
+    --devset_size ${QUANT_DEVSET_SIZE} \
+    --ctx_size ${QUANT_CTX_SIZE} \
+    2>&1 | tee -a ${LOG_FILE}
 
-# # ============================================================================
-# # Step 1: Hessian Extraction (quip-sharp)
-# # ============================================================================
-# echo ""
-# echo "===== Step 1: Hessian Extraction ====="
-# 
-# cd quip-sharp
-# 
-# echo "Running hessian extraction (single-GPU)..."
-# python -m quantize_llama.hessian_offline_llama \
-#     --base_model ${BASE_MODEL} \
-#     --save_path ../${HESS_DIR} \
-#     --batch_size ${HESS_BATCH_SIZE} \
-#     --devset_size ${HESS_DEVSET_SIZE} \
-#     --ctx_size ${HESS_CTX_SIZE} \
-#     --sample_proc 1 \
-#     2>&1 | tee -a ../${LOG_FILE}
-# 
-# cd ..
-# echo "Hessian extraction complete!"
-# 
-# # ============================================================================
-# # Step 3: QTIP Quantization
-# # ============================================================================
-# echo ""
-# echo "===== Step 3: QTIP Quantization ====="
-# echo "Running quantization (single-GPU)..."
-# python -m quantize_llama.quantize_finetune_llama \
-#     --save_path ${CKPT_DIR} \
-#     --codebook bitshift \
-#     --base_model ${BASE_MODEL} \
-#     --in_hess_path ${HESS_DIR} \
-#     --scale_override ${SCALE} \
-#     --ft_epochs 5 \
-#     --td_x ${TD_X} \
-#     --td_y ${TD_Y} \
-#     --L ${L} \
-#     --K ${K} \
-#     --V ${V} \
-#     --decode_mode ${DECODE_MODE} \
-#     --tlut_bits ${TLUT_BITS} \
-#     --batch_size ${QUANT_BATCH_SIZE} \
-#     --devset_size ${QUANT_DEVSET_SIZE} \
-#     --ctx_size ${QUANT_CTX_SIZE} \
-#     2>&1 | tee -a ${LOG_FILE}
-# 
-# echo "Quantization complete!"
-# 
+echo "Quantization complete!" | tee -a ${LOG_FILE}
+
 # ============================================================================
 # Step 4: Convert to HuggingFace model
 # ============================================================================
-echo ""
-echo "===== Step 4: HF Model Conversion ====="
+echo "" | tee -a ${LOG_FILE}
+echo "===== Step 4: HF Model Conversion =====" | tee -a ${LOG_FILE}
 python -m quantize_llama.hfize_llama \
     --quantized_path ${CKPT_DIR} \
     --hf_output_path ${HF_DIR} \
     2>&1 | tee -a ${LOG_FILE}
 
-echo "HF conversion complete!" 
+echo "HF conversion complete!" | tee -a ${LOG_FILE}
+
 # ============================================================================
-# Step 5: End-to-End Finetuning (requires 2 GPUs)
+# Step 5: End-to-End Finetuning
 # ============================================================================
-echo ""
-echo "===== Step 5: E2E Finetuning (2 GPUs) ====="
+echo "" | tee -a ${LOG_FILE}
+echo "===== Step 5: E2E Finetuning =====" | tee -a ${LOG_FILE}
 python -m quantize_llama.finetune_e2e_llama \
     --base_model ${BASE_MODEL} \
     --hf_path ${HF_DIR} \
@@ -132,28 +119,28 @@ python -m quantize_llama.finetune_e2e_llama \
     --hf_output_path ${HF_E2E_DIR} \
     2>&1 | tee -a ${LOG_FILE}
 
-echo "E2E finetuning complete!"
+echo "E2E finetuning complete!" | tee -a ${LOG_FILE}
 
 # ============================================================================
 # Step 6: Evaluate PPL (wikitext2 + c4)
 # ============================================================================
-echo ""
-echo "===== Step 6: PPL Evaluation ====="
+echo "" | tee -a ${LOG_FILE}
+echo "===== Step 6: PPL Evaluation =====" | tee -a ${LOG_FILE}
 
-echo "--- Evaluating non-finetuned model ---"
+echo "--- Evaluating non-finetuned model ---" | tee -a ${LOG_FILE}
 python -m eval.eval_ppl \
     --hf_path ${HF_DIR} \
     --base_model ${BASE_MODEL} \
     2>&1 | tee -a ${LOG_FILE}
 
-echo "--- Evaluating E2E finetuned model ---"
+echo "--- Evaluating E2E finetuned model ---" | tee -a ${LOG_FILE}
 python -m eval.eval_ppl \
     --hf_path ${HF_E2E_DIR} \
     --base_model ${BASE_MODEL} \
     2>&1 | tee -a ${LOG_FILE}
 
-echo ""
-echo "=============================================="
-echo " Pipeline Complete!"
-echo " Results are in: ${LOG_FILE}"
-echo "=============================================="
+echo "" | tee -a ${LOG_FILE}
+echo "==============================================" | tee -a ${LOG_FILE}
+echo " Pipeline Complete!" | tee -a ${LOG_FILE}
+echo " Results are in: ${LOG_FILE}" | tee -a ${LOG_FILE}
+echo "==============================================" | tee -a ${LOG_FILE}

@@ -70,9 +70,16 @@ def get_hadK(n, transpose=False):
         import warnings
         warnings.warn(f"No Hadamard matrix for dim {n}, using random orthogonal matrix with K={K}")
         # Generate random orthogonal matrix with fixed seed (float32 required for QR)
+        # IMPORTANT: Scale by sqrt(K) to match Hadamard convention.
+        # Standard Hadamard matrices have ±1 entries, so each row has norm sqrt(K).
+        # QR gives unit-norm rows (norm=1). Without scaling, the combined transform
+        # (butterfly ⊗ hadK) / sqrt(n) would be off by a factor of 1/sqrt(K),
+        # causing matmul_hadU @ matmul_hadUt != Identity.
+        import math
         rng = torch.Generator()
         rng.manual_seed(0)
         Q = torch.linalg.qr(torch.randn(K, K, generator=rng, dtype=torch.float32))[0]
+        Q = Q * math.sqrt(K)
         hadK = Q.T if transpose else Q
 
     return hadK, K
