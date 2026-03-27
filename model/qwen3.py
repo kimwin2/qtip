@@ -349,7 +349,9 @@ class Qwen3Attention(nn.Module):
 
         # Qwen3-specific: q_norm and k_norm
         # Qwen3Config uses 'qk_norm' (not 'use_qk_norm')
-        self.use_qk_norm = getattr(config, 'qk_norm', getattr(config, 'use_qk_norm', False))
+        # Default to True because Qwen3 always uses QK norm, and the
+        # attribute may be lost during config serialization (pickle→json)
+        self.use_qk_norm = getattr(config, 'qk_norm', getattr(config, 'use_qk_norm', True))
         if self.use_qk_norm:
             self.q_norm = Qwen3RMSNorm(self.head_dim, eps=config.rms_norm_eps)
             self.k_norm = Qwen3RMSNorm(self.head_dim, eps=config.rms_norm_eps)

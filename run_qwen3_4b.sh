@@ -103,17 +103,17 @@ echo "=============================================="
 # 
 # echo "Quantization complete!"
 # 
-# # ============================================================================
-# # Step 4: Convert to HuggingFace model
-# # ============================================================================
-# echo ""
-# echo "===== Step 4: HF Model Conversion ====="
-# python -m quantize_llama.hfize_llama \
-#     --quantized_path ${CKPT_DIR} \
-#     --hf_output_path ${HF_DIR} \
-#     2>&1 | tee -a ${LOG_FILE}
-# 
-# echo "HF conversion complete!"
+# ============================================================================
+# Step 4: Convert to HuggingFace model
+# ============================================================================
+echo ""
+echo "===== Step 4: HF Model Conversion ====="
+python -m quantize_llama.hfize_llama \
+    --quantized_path ${CKPT_DIR} \
+    --hf_output_path ${HF_DIR} \
+    2>&1 | tee -a ${LOG_FILE}
+
+echo "HF conversion complete!"
 # 
 # # ============================================================================
 # # Step 5: End-to-End Finetuning (requires 2 GPUs)
