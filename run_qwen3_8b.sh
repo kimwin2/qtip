@@ -34,9 +34,9 @@ SCALE=0.9
 HESS_BATCH_SIZE=1
 HESS_DEVSET_SIZE=256
 HESS_CTX_SIZE=4096
-QUANT_BATCH_SIZE=4
+QUANT_BATCH_SIZE=2
 QUANT_DEVSET_SIZE=256
-QUANT_CTX_SIZE=4096
+QUANT_CTX_SIZE=2048
 
 # Transformers: use 4.51.3+ throughout (Qwen3 support required)
 
@@ -99,6 +99,7 @@ python -m quantize_llama.quantize_finetune_llama \
     --batch_size ${QUANT_BATCH_SIZE} \
     --devset_size ${QUANT_DEVSET_SIZE} \
     --ctx_size ${QUANT_CTX_SIZE} \
+    --ft_grad_ckpt \
     2>&1 | tee -a ${LOG_FILE}
 
 echo "Quantization complete!"
@@ -122,13 +123,14 @@ echo "===== Step 5: E2E Finetuning (2 GPUs) ====="
 python -m quantize_llama.finetune_e2e_llama \
     --base_model ${BASE_MODEL} \
     --hf_path ${HF_DIR} \
-    --devset_size 256 \
-    --ft_valid_size 64 \
+    --devset_size 128 \
+    --ft_valid_size 32 \
     --ft_epochs 4 \
-    --ft_update_freq 2 \
+    --ft_update_freq 4 \
     --ft_bs 1 \
-    --ctx_size 2048 \
+    --ctx_size 512 \
     --ft_train_lut \
+    --ft_grad_ckpt \
     --hf_output_path ${HF_E2E_DIR} \
     2>&1 | tee -a ${LOG_FILE}
 
