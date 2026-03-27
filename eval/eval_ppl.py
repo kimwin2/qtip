@@ -35,10 +35,19 @@ def main(args):
                 module.mode = 'train-fixW'
 
     for dataset in datasets:
-        input_tok = gptq_data_utils.get_test_tokens(dataset,
-                                                    seed=args.seed,
-                                                    seqlen=args.seqlen,
-                                                    model=model_str)
+        try:
+            input_tok = gptq_data_utils.get_test_tokens(dataset,
+                                                        seed=args.seed,
+                                                        seqlen=args.seqlen,
+                                                        model=model_str)
+        except OSError:
+            # model_str may be a relative path without tokenizer files;
+            # try loading tokenizer from the quantized model directory instead
+            glog.info(f'Tokenizer not found at {model_str}, trying {args.hf_path}')
+            input_tok = gptq_data_utils.get_test_tokens(dataset,
+                                                        seed=args.seed,
+                                                        seqlen=args.seqlen,
+                                                        model=args.hf_path)
         nsamples = input_tok.numel() // args.seqlen
         input_tok = input_tok[0, :(args.seqlen * nsamples)].view(
             nsamples, args.seqlen)
