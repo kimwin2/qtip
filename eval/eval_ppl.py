@@ -18,6 +18,8 @@ torch.set_grad_enabled(False)
 parser = argparse.ArgumentParser()
 parser.add_argument('--seed', default=0, type=int)
 parser.add_argument('--hf_path', default='hfized/quantized_hada_70b', type=str)
+parser.add_argument('--base_model', default=None, type=str,
+                    help='Path to original (unquantized) model for tokenizer loading')
 parser.add_argument('--seqlen', default=4096, type=int)
 parser.add_argument('--manifest', action='store_true')
 parser.add_argument('--max_mem_ratio', default=0.7, type=float)
@@ -26,6 +28,10 @@ parser.add_argument('--max_mem_ratio', default=0.7, type=float)
 def main(args):
     datasets = ['wikitext2', 'c4']
     model, model_str = model_from_hf_path(args.hf_path, max_mem_ratio=args.max_mem_ratio)
+
+    # Determine where to load the tokenizer from.
+    # Priority: --base_model flag > model_str from config > hf_path
+    tokenizer_path = args.base_model or model_str
 
     if args.manifest:
         # manifest the model in BF/FP16 for faster inference
@@ -39,11 +45,9 @@ def main(args):
             input_tok = gptq_data_utils.get_test_tokens(dataset,
                                                         seed=args.seed,
                                                         seqlen=args.seqlen,
-                                                        model=model_str)
+                                                        model=tokenizer_path)
         except OSError:
-            # model_str may be a relative path without tokenizer files;
-            # try loading tokenizer from the quantized model directory instead
-            glog.info(f'Tokenizer not found at {model_str}, trying {args.hf_path}')
+            glog.info(f'Tokenizer not found at {tokenizer_path}, trying {args.hf_path}')
             input_tok = gptq_data_utils.get_test_tokens(dataset,
                                                         seed=args.seed,
                                                         seqlen=args.seqlen,

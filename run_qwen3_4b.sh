@@ -144,11 +144,13 @@ echo "===== Step 6: PPL Evaluation ====="
 echo "--- Evaluating non-finetuned model ---"
 python -m eval.eval_ppl \
     --hf_path ${HF_DIR} \
+    --base_model ${BASE_MODEL} \
     2>&1 | tee -a ${LOG_FILE}
 
 echo "--- Evaluating E2E finetuned model ---"
 python -m eval.eval_ppl \
     --hf_path ${HF_E2E_DIR} \
+    --base_model ${BASE_MODEL} \
     2>&1 | tee -a ${LOG_FILE}
 
 echo ""
