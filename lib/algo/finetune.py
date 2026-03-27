@@ -361,17 +361,21 @@ def quantize_finetune_decoder_layer(mixed_layer, quant_order, idx, cb, args,
 
 def infer(args, end_dev, n_layers, in_q, out_q):
     with torch.no_grad():
+        # Detect GPUs from within the subprocess; end_dev may be 0 if
+        # the caller reserved all GPUs for the quantized model.
+        num_devs = torch.cuda.device_count()
+        assert num_devs > 0, "No GPUs visible in infer subprocess"
         fake_dev_map = {
             'model.embed_tokens': 0,
-            'model.norm': end_dev - 1,
-            'lm_head': end_dev - 1
+            'model.norm': num_devs - 1,
+            'lm_head': num_devs - 1
         }
         # Add rotary_emb only if model has it at top level
         # (Llama has model.rotary_emb, Qwen3 also has it)
         fake_dev_map['model.rotary_emb'] = 0
-        per_dev = math.ceil(n_layers / end_dev)
+        per_dev = math.ceil(n_layers / num_devs)
         for i in range(n_layers):
-            fake_dev_map[f'model.layers.{i}'] = (i + 1) // per_dev
+            fake_dev_map[f'model.layers.{i}'] = min((i + 1) // per_dev, num_devs - 1)
 
         model = AutoModelForCausalLM.from_pretrained(args.base_model,
                                                      torch_dtype='auto',
