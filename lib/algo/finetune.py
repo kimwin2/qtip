@@ -365,10 +365,15 @@ def infer(args, end_dev, n_layers, in_q, out_q):
         # the caller reserved all GPUs for the quantized model.
         num_devs = torch.cuda.device_count()
         assert num_devs > 0, "No GPUs visible in infer subprocess"
+
+        # Put lm_head on device 0 (same as embed_tokens) so that tied
+        # word embeddings stay on a single GPU.  accelerate's hooks
+        # automatically move hidden states from norm's device to
+        # lm_head's device, so this is safe.
         fake_dev_map = {
             'model.embed_tokens': 0,
             'model.norm': num_devs - 1,
-            'lm_head': num_devs - 1
+            'lm_head': 0
         }
         # Add rotary_emb only if model has it at top level
         # (Llama has model.rotary_emb, Qwen3 also has it)
@@ -377,28 +382,10 @@ def infer(args, end_dev, n_layers, in_q, out_q):
         for i in range(n_layers):
             fake_dev_map[f'model.layers.{i}'] = min((i + 1) // per_dev, num_devs - 1)
 
-        # Load model to CPU first so we can untie word embeddings before
-        # dispatching to the multi-GPU device map.  When tie_word_embeddings
-        # is True, lm_head.weight and embed_tokens.weight share the same
-        # tensor.  Placing them on different GPUs via device_map causes a
-        # RuntimeError, so we explicitly untie them here.
-        from accelerate import dispatch_model, infer_auto_device_map
         model = AutoModelForCausalLM.from_pretrained(args.base_model,
                                                      torch_dtype='auto',
-                                                     device_map='cpu',
+                                                     device_map=fake_dev_map,
                                                      low_cpu_mem_usage=True)
-
-        # Untie lm_head from embed_tokens so they can live on separate GPUs
-        if model.config.tie_word_embeddings:
-            model.config.tie_word_embeddings = False
-            model.lm_head.weight = nn.Parameter(
-                model.model.embed_tokens.weight.clone()
-            )
-            # prevent re-tying on next forward
-            model.tie_weights = lambda: None
-
-        dispatch_model(model, device_map=fake_dev_map)
-
         while True:
             data = in_q.get()
             if data is None:
