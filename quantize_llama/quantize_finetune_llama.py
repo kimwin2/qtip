@@ -54,7 +54,7 @@ parser.add_argument('--skip_list', default=None, type=str)
 
 
 def check_exist(idx, args):
-    suffix = ['q', 'k', 'v', 'o', 'up', 'down', 'layernorm']
+    suffix = ['q', 'k', 'v', 'o', 'up', 'gate', 'down', 'layernorm']
     for _ in suffix:
         test = f'{args.save_path}/{idx}_{_}.pt'
         if not os.path.exists(test):

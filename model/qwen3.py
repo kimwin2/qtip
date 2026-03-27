@@ -348,7 +348,8 @@ class Qwen3Attention(nn.Module):
                                     bias=attention_bias)
 
         # Qwen3-specific: q_norm and k_norm
-        self.use_qk_norm = getattr(config, 'use_qk_norm', False)
+        # Qwen3Config uses 'qk_norm' (not 'use_qk_norm')
+        self.use_qk_norm = getattr(config, 'qk_norm', getattr(config, 'use_qk_norm', False))
         if self.use_qk_norm:
             self.q_norm = Qwen3RMSNorm(self.head_dim, eps=config.rms_norm_eps)
             self.k_norm = Qwen3RMSNorm(self.head_dim, eps=config.rms_norm_eps)
