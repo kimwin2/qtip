@@ -55,85 +55,85 @@ echo "Quantization: ${K}-bit (L=${L}, K=${K}, V=${V})"
 echo "Log: ${LOG_FILE}"
 echo "=============================================="
 
-# ============================================================================
-# Step 1: Hessian Extraction (quip-sharp)
-# ============================================================================
-echo ""
-echo "===== Step 1: Hessian Extraction ====="
-
-cd quip-sharp
-
-echo "Running hessian extraction (single-GPU)..."
-python -m quantize_llama.hessian_offline_llama \
-    --base_model ${BASE_MODEL} \
-    --save_path ../${HESS_DIR} \
-    --batch_size ${HESS_BATCH_SIZE} \
-    --devset_size ${HESS_DEVSET_SIZE} \
-    --ctx_size ${HESS_CTX_SIZE} \
-    --sample_proc 1 \
-    2>&1 | tee -a ../${LOG_FILE}
-
-cd ..
-echo "Hessian extraction complete!"
-
-# ============================================================================
-# Step 3: QTIP Quantization
-# ============================================================================
-echo ""
-echo "===== Step 3: QTIP Quantization ====="
-echo "Running quantization (single-GPU)..."
-python -m quantize_llama.quantize_finetune_llama \
-    --save_path ${CKPT_DIR} \
-    --codebook bitshift \
-    --base_model ${BASE_MODEL} \
-    --in_hess_path ${HESS_DIR} \
-    --scale_override ${SCALE} \
-    --ft_epochs 5 \
-    --td_x ${TD_X} \
-    --td_y ${TD_Y} \
-    --L ${L} \
-    --K ${K} \
-    --V ${V} \
-    --decode_mode ${DECODE_MODE} \
-    --tlut_bits ${TLUT_BITS} \
-    --batch_size ${QUANT_BATCH_SIZE} \
-    --devset_size ${QUANT_DEVSET_SIZE} \
-    --ctx_size ${QUANT_CTX_SIZE} \
-    2>&1 | tee -a ${LOG_FILE}
-
-echo "Quantization complete!"
-
-# ============================================================================
-# Step 4: Convert to HuggingFace model
-# ============================================================================
-echo ""
-echo "===== Step 4: HF Model Conversion ====="
-python -m quantize_llama.hfize_llama \
-    --quantized_path ${CKPT_DIR} \
-    --hf_output_path ${HF_DIR} \
-    2>&1 | tee -a ${LOG_FILE}
-
-echo "HF conversion complete!"
-
-# ============================================================================
-# Step 5: End-to-End Finetuning (requires 2 GPUs)
-# ============================================================================
-echo ""
-echo "===== Step 5: E2E Finetuning (2 GPUs) ====="
-python -m quantize_llama.finetune_e2e_llama \
-    --base_model ${BASE_MODEL} \
-    --hf_path ${HF_DIR} \
-    --devset_size 256 \
-    --ft_valid_size 64 \
-    --ft_epochs 4 \
-    --ft_update_freq 2 \
-    --ft_bs 1 \
-    --ctx_size 2048 \
-    --ft_train_lut \
-    --hf_output_path ${HF_E2E_DIR} \
-    2>&1 | tee -a ${LOG_FILE}
-
-echo "E2E finetuning complete!"
+# # ============================================================================
+# # Step 1: Hessian Extraction (quip-sharp)
+# # ============================================================================
+# echo ""
+# echo "===== Step 1: Hessian Extraction ====="
+# 
+# cd quip-sharp
+# 
+# echo "Running hessian extraction (single-GPU)..."
+# python -m quantize_llama.hessian_offline_llama \
+#     --base_model ${BASE_MODEL} \
+#     --save_path ../${HESS_DIR} \
+#     --batch_size ${HESS_BATCH_SIZE} \
+#     --devset_size ${HESS_DEVSET_SIZE} \
+#     --ctx_size ${HESS_CTX_SIZE} \
+#     --sample_proc 1 \
+#     2>&1 | tee -a ../${LOG_FILE}
+# 
+# cd ..
+# echo "Hessian extraction complete!"
+# 
+# # ============================================================================
+# # Step 3: QTIP Quantization
+# # ============================================================================
+# echo ""
+# echo "===== Step 3: QTIP Quantization ====="
+# echo "Running quantization (single-GPU)..."
+# python -m quantize_llama.quantize_finetune_llama \
+#     --save_path ${CKPT_DIR} \
+#     --codebook bitshift \
+#     --base_model ${BASE_MODEL} \
+#     --in_hess_path ${HESS_DIR} \
+#     --scale_override ${SCALE} \
+#     --ft_epochs 5 \
+#     --td_x ${TD_X} \
+#     --td_y ${TD_Y} \
+#     --L ${L} \
+#     --K ${K} \
+#     --V ${V} \
+#     --decode_mode ${DECODE_MODE} \
+#     --tlut_bits ${TLUT_BITS} \
+#     --batch_size ${QUANT_BATCH_SIZE} \
+#     --devset_size ${QUANT_DEVSET_SIZE} \
+#     --ctx_size ${QUANT_CTX_SIZE} \
+#     2>&1 | tee -a ${LOG_FILE}
+# 
+# echo "Quantization complete!"
+# 
+# # ============================================================================
+# # Step 4: Convert to HuggingFace model
+# # ============================================================================
+# echo ""
+# echo "===== Step 4: HF Model Conversion ====="
+# python -m quantize_llama.hfize_llama \
+#     --quantized_path ${CKPT_DIR} \
+#     --hf_output_path ${HF_DIR} \
+#     2>&1 | tee -a ${LOG_FILE}
+# 
+# echo "HF conversion complete!"
+# 
+# # ============================================================================
+# # Step 5: End-to-End Finetuning (requires 2 GPUs)
+# # ============================================================================
+# echo ""
+# echo "===== Step 5: E2E Finetuning (2 GPUs) ====="
+# python -m quantize_llama.finetune_e2e_llama \
+#     --base_model ${BASE_MODEL} \
+#     --hf_path ${HF_DIR} \
+#     --devset_size 256 \
+#     --ft_valid_size 64 \
+#     --ft_epochs 4 \
+#     --ft_update_freq 2 \
+#     --ft_bs 1 \
+#     --ctx_size 2048 \
+#     --ft_train_lut \
+#     --hf_output_path ${HF_E2E_DIR} \
+#     2>&1 | tee -a ${LOG_FILE}
+# 
+# echo "E2E finetuning complete!"
 
 # ============================================================================
 # Step 6: Evaluate PPL (wikitext2 + c4)
