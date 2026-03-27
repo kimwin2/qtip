@@ -377,10 +377,28 @@ def infer(args, end_dev, n_layers, in_q, out_q):
         for i in range(n_layers):
             fake_dev_map[f'model.layers.{i}'] = min((i + 1) // per_dev, num_devs - 1)
 
+        # Load model to CPU first so we can untie word embeddings before
+        # dispatching to the multi-GPU device map.  When tie_word_embeddings
+        # is True, lm_head.weight and embed_tokens.weight share the same
+        # tensor.  Placing them on different GPUs via device_map causes a
+        # RuntimeError, so we explicitly untie them here.
+        from accelerate import dispatch_model, infer_auto_device_map
         model = AutoModelForCausalLM.from_pretrained(args.base_model,
                                                      torch_dtype='auto',
-                                                     device_map=fake_dev_map,
+                                                     device_map='cpu',
                                                      low_cpu_mem_usage=True)
+
+        # Untie lm_head from embed_tokens so they can live on separate GPUs
+        if model.config.tie_word_embeddings:
+            model.config.tie_word_embeddings = False
+            model.lm_head.weight = nn.Parameter(
+                model.model.embed_tokens.weight.clone()
+            )
+            # prevent re-tying on next forward
+            model.tie_weights = lambda: None
+
+        dispatch_model(model, device_map=fake_dev_map)
+
         while True:
             data = in_q.get()
             if data is None:
