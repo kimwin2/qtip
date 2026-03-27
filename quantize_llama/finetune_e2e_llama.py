@@ -100,17 +100,15 @@ def main(args):
     del orig_model  # remanifest in eval process
     utils.clean()
 
+    # Load quantized model to CPU first (no accelerate dispatch hooks yet),
+    # convert to float32, then dispatch to GPUs.  This avoids the device
+    # mismatch that occurs when .float() is called on an already-dispatched
+    # accelerate model.
+    from accelerate import dispatch_model
     quant_model = model_from_hf_path(args.hf_path,
-                                     device_map=fake_dev_map)[0]
-
-    # Convert parameters to float32 in-place on each device.
-    # Do NOT call .float() on the whole model — it breaks accelerate's
-    # device dispatch hooks when using multi-GPU device_map.
-    for param in quant_model.parameters():
-        param.data = param.data.float()
-    for buf_name, buf in quant_model.named_buffers():
-        if buf.is_floating_point():
-            buf.data = buf.data.float()
+                                     device_map={'': 'cpu'})[0]
+    quant_model = quant_model.float()
+    dispatch_model(quant_model, device_map=fake_dev_map)
 
     for name, module in quant_model.named_modules():
         if isinstance(module, QuantizedLinear):
