@@ -5,6 +5,7 @@ Evaluates quantized QTIP models on: HellaSwag, PIQA, WinoGrande, ARC-e, ARC-c
 Usage:
     python -m eval.eval_zeroshot_v2 \
         --hf_path hf/qwen3_4b_2bit_e2e \
+        --base_model /models/Qwen/Qwen3-4B-Base \
         --tasks hellaswag,piqa,winogrande,arc_easy,arc_challenge \
         --batch_size 16 \
         --output_path results/qwen3_4b_2bit_e2e_zeroshot.json
@@ -34,6 +35,8 @@ parser = argparse.ArgumentParser(description="Zero-shot evaluation with lm_eval 
 parser.add_argument('--seed', default=0, type=int)
 parser.add_argument('--hf_path', required=True, type=str,
                     help='Path to quantized HF model')
+parser.add_argument('--base_model', default=None, type=str,
+                    help='Path to original (unquantized) model for tokenizer loading')
 parser.add_argument('--batch_size', type=int, default=16,
                     help='Batch size for evaluation')
 parser.add_argument("--tasks", type=str, default=DEFAULT_TASKS,
@@ -108,9 +111,15 @@ def main(args):
             if isinstance(module, QuantizedLinear):
                 module.mode = 'train-fixW'
 
-    tokenizer = AutoTokenizer.from_pretrained(model_str)
+    # Load tokenizer: --base_model > model_str from config > hf_path
+    tokenizer_path = args.base_model or model_str
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
+    except OSError:
+        glog.info(f'Tokenizer not found at {tokenizer_path}, trying {args.hf_path}')
+        tokenizer = AutoTokenizer.from_pretrained(args.hf_path)
     tokenizer.pad_token = tokenizer.eos_token
-    glog.info("Model and tokenizer loaded!")
+    glog.info(f"Model and tokenizer loaded! (tokenizer from: {tokenizer_path})")
 
     task_names = [t.strip() for t in args.tasks.split(",")]
     glog.info(f"Tasks: {task_names}")

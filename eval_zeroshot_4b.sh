@@ -15,6 +15,7 @@ export HF_HUB_CACHE="/group-volume/ym1012.kim/repo/qtip/hf_cache/huggingface/hub
 
 # ===== Configuration =====
 MODEL_NAME="qwen3_4b_2bit"
+BASE_MODEL="/models/Qwen/Qwen3-4B-Base"
 HF_PATH="hf/qwen3_4b_2bit_e2e"
 TASKS="hellaswag,piqa,winogrande,arc_easy,arc_challenge"
 BATCH_SIZE=16
@@ -51,6 +52,7 @@ echo "============================================================"
 
 python -m eval.eval_zeroshot_v2 \
     --hf_path ${HF_PATH} \
+    --base_model ${BASE_MODEL} \
     --tasks ${TASKS} \
     --batch_size ${BATCH_SIZE} \
     --num_fewshot ${NUM_FEWSHOT} \
